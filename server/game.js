@@ -9,7 +9,7 @@ const MAX_PLAYERS = 6;
 const STARTING_CHIPS = 2000;
 const SMALL_BLIND = 10;
 const BIG_BLIND = 20;
-const MAX_LOG_ENTRIES = 24;
+const MAX_LOG_ENTRIES = 60;
 const ROOM_TTL_MS = 1000 * 60 * 60 * 6;
 const BACK_CARD_IMAGE = "https://deckofcardsapi.com/static/img/back.png";
 
@@ -27,11 +27,11 @@ function clampWholeNumber(value) {
 }
 
 function addLog(room, text) {
-  room.actionLog.unshift({
+  room.actionLog.push({
     id: nanoid(8),
     text
   });
-  room.actionLog = room.actionLog.slice(0, MAX_LOG_ENTRIES);
+  room.actionLog = room.actionLog.slice(-MAX_LOG_ENTRIES);
 }
 
 function getPlayersInSeatOrder(room, filter = () => true) {
@@ -294,6 +294,38 @@ export class PokerRoomManager {
     return { room, player };
   }
 
+  removePlayer(roomId, playerId) {
+    const room = this.getRoom(roomId);
+
+    if (!room) {
+      throw new Error("Room not found.");
+    }
+
+    if (this.isHandLive(room)) {
+      throw new Error("Finish the current hand before changing seats.");
+    }
+
+    const playerIndex = room.players.findIndex((player) => player.id === playerId);
+
+    if (playerIndex === -1) {
+      throw new Error("Player seat not found.");
+    }
+
+    const [player] = room.players.splice(playerIndex, 1);
+
+    if (player?.socketId) {
+      this.socketIndex.delete(player.socketId);
+    }
+
+    if (player) {
+      addLog(room, `${player.name} left the table`);
+    }
+
+    this.promoteHost(room);
+    room.updatedAt = Date.now();
+    return room;
+  }
+
   async disconnectSocket(socketId) {
     const mapping = this.socketIndex.get(socketId);
 
@@ -473,6 +505,8 @@ export class PokerRoomManager {
         return {
           id: player.id,
           name: player.name,
+          isBot: Boolean(player.isBot),
+          botDifficulty: player.botDifficulty ?? null,
           seat: player.seat,
           chips: player.chips,
           connected: player.connected,

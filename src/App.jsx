@@ -2,31 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 
-const PHASE_LABELS = {
-  waiting: "Waiting",
-  preflop: "Pre-Flop",
-  flop: "Flop",
-  turn: "Turn",
-  river: "River",
-  showdown: "Showdown"
-};
+import { ActionFeed, InviteCard, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
+import { SoloPokerSession } from "./soloSession.js";
 
-const SEAT_CLASSES = [
-  "seat-bottom",
-  "seat-bottom-left",
-  "seat-top-left",
-  "seat-top",
-  "seat-top-right",
-  "seat-bottom-right"
+const ACTIVE_PHASES = new Set(["preflop", "flop", "turn", "river"]);
+const SOLO_NAME_STORAGE_KEY = "luxe-holdem:solo-name";
+const BOT_OPTIONS = [
+  {
+    id: "easy",
+    title: "Easy",
+    description: "Loose and predictable."
+  },
+  {
+    id: "medium",
+    title: "Medium",
+    description: "Balanced and steadier."
+  },
+  {
+    id: "hard",
+    title: "Hard",
+    description: "More aggressive pressure."
+  }
 ];
-
-function formatChips(amount) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0
-  }).format(amount ?? 0);
-}
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -58,8 +55,50 @@ function saveStoredSession(roomId, session) {
   }
 }
 
-function getRelativeSeat(seat, anchorSeat, maxPlayers) {
-  return (seat - anchorSeat + maxPlayers) % maxPlayers;
+function loadSoloName() {
+  try {
+    return window.localStorage.getItem(SOLO_NAME_STORAGE_KEY) ?? "You";
+  } catch {
+    return "You";
+  }
+}
+
+function saveSoloName(value) {
+  try {
+    window.localStorage.setItem(SOLO_NAME_STORAGE_KEY, value);
+  } catch {
+    // Storage access is optional.
+  }
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall back below.
+    }
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function isHandLive(room) {
+  return ACTIVE_PHASES.has(room?.phase ?? "waiting");
 }
 
 function buildQuickRaiseOptions(room, viewer) {
@@ -99,6 +138,7 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/room/:roomId" element={<RoomPage />} />
+        <Route path="/solo" element={<SoloPage />} />
       </Routes>
     </BrowserRouter>
   );
@@ -152,12 +192,15 @@ function HomePage() {
           <p className="eyebrow">Luxe Hold&apos;em</p>
           <h1>Multiplayer poker with private room URLs and a clean table-first UI.</h1>
           <p className="hero-text">
-            Create a room, share the link, and deal Texas Hold&apos;em hands backed by the Deck of Cards API.
+            Create a room, share the link, deal Texas Hold&apos;em through the Deck of Cards API, or stay local with bots.
           </p>
           <div className="hero-actions">
-            <button className="primary-button" onClick={handleCreateRoom} disabled={creating}>
+            <button className="primary-button" onClick={handleCreateRoom} disabled={creating} type="button">
               {creating ? "Creating room..." : "Create Room"}
             </button>
+            <Link className="secondary-button hero-link-button" to="/solo">
+              Single Player
+            </Link>
             <form className="join-form" onSubmit={handleJoinRoom}>
               <input
                 className="text-input"
@@ -201,8 +244,8 @@ function HomePage() {
                 <strong>Texas Hold&apos;em</strong>
               </div>
               <div>
-                <small>Deck</small>
-                <strong>API-driven</strong>
+                <small>Modes</small>
+                <strong>Solo + Rooms</strong>
               </div>
             </div>
           </div>
@@ -224,6 +267,7 @@ function RoomPage() {
   const [copied, setCopied] = useState(false);
   const [raiseTarget, setRaiseTarget] = useState(0);
   const socketRef = useRef(null);
+  const copyTimerRef = useRef(null);
 
   useEffect(() => {
     const saved = loadStoredSession(roomId);
@@ -309,33 +353,33 @@ function RoomPage() {
     });
   }, [room]);
 
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    },
+    []
+  );
+
   const viewer = room?.players.find((player) => player.id === room.viewerPlayerId) ?? null;
-  const viewerSeat = viewer?.seat ?? 0;
-  const seatMap = new Map();
-
-  if (room) {
-    for (const player of room.players) {
-      seatMap.set(getRelativeSeat(player.seat, viewerSeat, room.maxPlayers), player);
-    }
-  }
-
-  const seats = Array.from({ length: room?.maxPlayers ?? 6 }, (_, index) => ({
-    relativeSeat: index,
-    player: seatMap.get(index) ?? null
-  }));
-
   const quickRaiseOptions = buildQuickRaiseOptions(room, viewer);
-  const shareUrl =
-    typeof window === "undefined" ? "" : `${window.location.origin}/room/${roomId}`;
+  const shareUrl = typeof window === "undefined" ? `/room/${roomId}` : window.location.href;
 
   async function handleCopyLink() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
+    const copiedLink = await copyText(shareUrl);
+    setCopied(copiedLink);
+
+    if (copiedLink) {
+      if (copyTimerRef.current) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1500);
+      return;
     }
+
+    setError("Unable to copy the invite link on this device.");
   }
 
   function handleJoinTable(event) {
@@ -388,7 +432,7 @@ function RoomPage() {
           <span className={`status-pill ${connected ? "is-live" : "is-offline"}`}>
             {connected ? "Live" : "Reconnecting"}
           </span>
-          <button className="secondary-button" onClick={handleCopyLink}>
+          <button className="secondary-button" onClick={handleCopyLink} type="button">
             {copied ? "Link copied" : "Copy room link"}
           </button>
         </div>
@@ -397,112 +441,12 @@ function RoomPage() {
       {error ? <div className="error-banner room-error">{error}</div> : null}
 
       <section className="table-layout">
-        <div className="table-stage">
-          <div className="table-surface">
-            <div className="table-rim" />
-            <div className="table-center">
-              <div className="center-pill">
-                <span>{PHASE_LABELS[room?.phase ?? "waiting"]}</span>
-                <strong>{formatChips(room?.pot ?? 0)}</strong>
-                <small>Pot</small>
-              </div>
-
-              <div className="community-row">
-                {Array.from({ length: 5 }, (_, index) => room?.communityCards?.[index] ?? null).map((card, index) => (
-                  <CardFace
-                    key={card?.code ?? `community-${index}`}
-                    card={card}
-                    backCardImage={room?.backCardImage}
-                    placeholder={!card}
-                  />
-                ))}
-              </div>
-
-              <div className="table-meta">
-                <div>
-                  <small>Current bet</small>
-                  <strong>{formatChips(room?.currentBet ?? 0)}</strong>
-                </div>
-                <div>
-                  <small>Blinds</small>
-                  <strong>
-                    {formatChips(room?.smallBlind ?? 10)} / {formatChips(room?.bigBlind ?? 20)}
-                  </strong>
-                </div>
-                <div>
-                  <small>Hand</small>
-                  <strong>#{room?.handNumber ?? 0}</strong>
-                </div>
-              </div>
-            </div>
-
-            {seats.map(({ relativeSeat, player }) => (
-              <div key={relativeSeat} className={`seat-shell ${SEAT_CLASSES[relativeSeat]}`}>
-                {player ? (
-                  <SeatCard
-                    player={player}
-                    backCardImage={room?.backCardImage}
-                    isTurn={room?.currentTurnPlayerId === player.id}
-                    isViewer={player.id === room?.viewerPlayerId}
-                  />
-                ) : (
-                  <div className="seat-card empty-seat">
-                    <span>Open seat</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        <TableSurface room={room} />
 
         <aside className="side-rail">
-          <section className="rail-card">
-            <div className="rail-card-header">
-              <span className="section-label">Share</span>
-              <strong>Invite players</strong>
-            </div>
-            <p className="muted-text">{shareUrl}</p>
-            <button className="secondary-button wide-button" onClick={handleCopyLink}>
-              {copied ? "Copied" : "Copy invite link"}
-            </button>
-          </section>
-
-          <section className="rail-card">
-            <div className="rail-card-header">
-              <span className="section-label">Showdown</span>
-              <strong>Latest result</strong>
-            </div>
-            {room?.showdown?.winners?.length ? (
-              <div className="showdown-list">
-                {room.showdown.winners.map((winner) => (
-                  <div key={winner.playerId} className="showdown-item">
-                    <div>
-                      <strong>{winner.name}</strong>
-                      <p>{winner.hand || "Split pot"}</p>
-                    </div>
-                    <span>{formatChips(winner.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted-text">Results appear here after each showdown.</p>
-            )}
-          </section>
-
-          <section className="rail-card">
-            <div className="rail-card-header">
-              <span className="section-label">Action</span>
-              <strong>Table feed</strong>
-            </div>
-            <div className="log-list">
-              {(room?.actionLog ?? []).map((entry) => (
-                <div key={entry.id} className="log-entry">
-                  {entry.text}
-                </div>
-              ))}
-              {!room?.actionLog?.length ? <p className="muted-text">Actions will appear here.</p> : null}
-            </div>
-          </section>
+          <InviteCard copied={copied} onCopy={handleCopyLink} shareUrl={shareUrl} />
+          <ShowdownPanel showdown={room?.showdown} />
+          <ActionFeed actionLog={room?.actionLog} />
         </aside>
       </section>
 
@@ -534,80 +478,20 @@ function RoomPage() {
               <h2>Deal the next hand</h2>
               <p>Everyone seated with chips will be dealt in.</p>
             </div>
-            <button className="primary-button" onClick={handleStartHand}>
+            <button className="primary-button" onClick={handleStartHand} type="button">
               Start Hand
             </button>
           </div>
         ) : room?.controls?.canAct ? (
-          <div className="action-panel action-panel-live">
-            <div className="action-summary">
-              <span className="section-label">Your action</span>
-              <h2>{viewer?.name}</h2>
-              <p>
-                Stack {formatChips(viewer?.chips ?? 0)}. Current contribution{" "}
-                {formatChips(viewer?.streetContribution ?? 0)}.
-              </p>
-            </div>
-
-            <div className="action-buttons">
-              <button className="ghost-button" onClick={() => handleAction("fold")}>
-                Fold
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => handleAction(room.controls.canCall ? "call" : "check")}
-              >
-                {callLabel}
-              </button>
-            </div>
-
-            {room.controls.canRaise ? (
-              <div className="raise-panel">
-                <div className="raise-header">
-                  <span>{room.currentBet === 0 ? "Bet" : "Raise to"}</span>
-                  <strong>{formatChips(raiseTarget)}</strong>
-                </div>
-                <input
-                  className="raise-slider"
-                  type="range"
-                  min={room.controls.minRaiseTo}
-                  max={room.controls.maxRaiseTo}
-                  step="10"
-                  value={raiseTarget}
-                  onChange={(event) => setRaiseTarget(Number(event.target.value))}
-                />
-                <div className="raise-quick-row">
-                  {quickRaiseOptions.map((option) => (
-                    <button
-                      key={option.label}
-                      className="chip-button"
-                      onClick={() => setRaiseTarget(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="raise-submit-row">
-                  <input
-                    className="amount-input"
-                    type="number"
-                    min={room.controls.minRaiseTo}
-                    max={room.controls.maxRaiseTo}
-                    step="10"
-                    value={raiseTarget}
-                    onChange={(event) =>
-                      setRaiseTarget(
-                        clamp(Number(event.target.value), room.controls.minRaiseTo, room.controls.maxRaiseTo)
-                      )
-                    }
-                  />
-                  <button className="primary-button" onClick={() => handleAction("raise", raiseTarget)}>
-                    {room.currentBet === 0 ? "Bet" : "Raise"}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
+          <PlayerActionPanel
+            callLabel={callLabel}
+            onAction={handleAction}
+            quickRaiseOptions={quickRaiseOptions}
+            raiseTarget={raiseTarget}
+            room={room}
+            setRaiseTarget={setRaiseTarget}
+            viewer={viewer}
+          />
         ) : (
           <div className="action-panel">
             <div>
@@ -615,12 +499,12 @@ function RoomPage() {
               <h2>{room?.tableMessage ?? "Waiting for room state"}</h2>
               <p>
                 {viewer
-                  ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` • ${viewer.bestHandName}` : ""}`
+                  ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
                   : "Join the table from this device to receive your own seat and cards."}
               </p>
             </div>
             {room?.phase === "showdown" && room?.canStartHand ? (
-              <button className="primary-button" onClick={handleStartHand}>
+              <button className="primary-button" onClick={handleStartHand} type="button">
                 Next Hand
               </button>
             ) : null}
@@ -631,80 +515,326 @@ function RoomPage() {
   );
 }
 
-function SeatCard({ player, backCardImage, isTurn, isViewer }) {
-  const badges = [];
+function SoloPage() {
+  const controllerRef = useRef(null);
+  const [playerName, setPlayerName] = useState(() => loadSoloName());
+  const [room, setRoom] = useState(null);
+  const [error, setError] = useState("");
+  const [botThinking, setBotThinking] = useState(false);
+  const [raiseTarget, setRaiseTarget] = useState(0);
 
-  if (player.isDealer) {
-    badges.push("D");
+  useEffect(() => {
+    const controller = new SoloPokerSession({
+      onUpdate: setRoom,
+      onError: setError,
+      onBotState: setBotThinking
+    });
+
+    controllerRef.current = controller;
+    controller.ensureHuman(loadSoloName());
+
+    return () => {
+      controller.destroy();
+      controllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!room?.controls?.canRaise) {
+      setRaiseTarget(0);
+      return;
+    }
+
+    setRaiseTarget((current) => {
+      const next = current || room.controls.minRaiseTo;
+      return clamp(next, room.controls.minRaiseTo, room.controls.maxRaiseTo);
+    });
+  }, [room]);
+
+  const viewer = room?.players.find((player) => player.id === room.viewerPlayerId) ?? null;
+  const quickRaiseOptions = buildQuickRaiseOptions(room, viewer);
+  const canEditSeats = !isHandLive(room);
+  const botPlayers = room?.players.filter((player) => player.isBot) ?? [];
+
+  function handleSaveName(event) {
+    event.preventDefault();
+    const normalizedName = playerName.trim() || "You";
+
+    saveSoloName(normalizedName);
+    setPlayerName(normalizedName);
+    controllerRef.current?.ensureHuman(normalizedName);
+    setError("");
   }
 
-  if (player.isSmallBlind) {
-    badges.push("SB");
+  function handleAddBot(difficulty) {
+    if (!canEditSeats) {
+      setError("Finish the current hand before adding bots.");
+      return;
+    }
+
+    try {
+      controllerRef.current?.addBot(difficulty);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to add bot.");
+    }
   }
 
-  if (player.isBigBlind) {
-    badges.push("BB");
+  function handleRemoveBot(playerId) {
+    try {
+      controllerRef.current?.removePlayer(playerId);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to remove bot.");
+    }
   }
 
-  if (!player.connected) {
-    badges.push("Away");
+  async function handleStartHand() {
+    try {
+      await controllerRef.current?.startHand();
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to start the hand.");
+    }
   }
 
-  if (player.folded) {
-    badges.push("Folded");
+  async function handleAction(type, amount) {
+    try {
+      await controllerRef.current?.handleHumanAction({
+        type,
+        amount
+      });
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Action failed.");
+    }
   }
 
-  if (player.allIn) {
-    badges.push("All in");
-  }
-
-  const cards =
-    player.holeCards.length > 0
-      ? player.holeCards
-      : Array.from({ length: player.cardCount }, (_, index) => ({
-          code: `BACK-${index}`,
-          image: backCardImage
-        }));
+  const callLabel =
+    room?.controls?.canCall && viewer
+      ? room.controls.callAmount < Math.max(0, room.currentBet - viewer.streetContribution)
+        ? `All in ${formatChips(room.controls.callAmount)}`
+        : `Call ${formatChips(room.controls.callAmount)}`
+      : "Check";
 
   return (
-    <div className={`seat-card ${isTurn ? "is-turn" : ""} ${isViewer ? "is-viewer" : ""}`}>
-      <div className="seat-header">
+    <main className="room-shell">
+      <div className="home-noise" />
+      <header className="room-header">
         <div>
-          <strong>{player.name}</strong>
-          <p>{formatChips(player.chips)}</p>
+          <Link className="room-link" to="/">
+            Lobby
+          </Link>
+          <h1>Solo Table</h1>
+          <p>{botThinking ? "Bots are thinking..." : room?.tableMessage ?? "Preparing local table..."}</p>
         </div>
-        {player.lastWinAmount > 0 ? <span className="win-pill">+{formatChips(player.lastWinAmount)}</span> : null}
-      </div>
 
-      <div className="seat-badges">
-        {badges.map((badge) => (
-          <span key={badge}>{badge}</span>
-        ))}
-        {player.isHost ? <span>Host</span> : null}
-      </div>
+        <div className="room-header-actions">
+          <span className="status-pill is-live">Local</span>
+        </div>
+      </header>
 
-      <div className={`seat-cards ${player.folded ? "is-muted" : ""}`}>
-        {cards.map((card) => (
-          <CardFace key={card.code} card={card} backCardImage={backCardImage} />
-        ))}
-      </div>
+      {error ? <div className="error-banner room-error">{error}</div> : null}
 
-      <div className="seat-footer">
-        <span>{player.lastAction || "Waiting"}</span>
-        {player.bestHandName ? <strong>{player.bestHandName}</strong> : null}
-      </div>
-    </div>
+      <section className="table-layout">
+        <TableSurface room={room} />
+
+        <aside className="side-rail">
+          <section className="rail-card">
+            <div className="rail-card-header">
+              <span className="section-label">Local mode</span>
+              <strong>Seat bots at the table</strong>
+            </div>
+            <form className="solo-name-form" onSubmit={handleSaveName}>
+              <input
+                className="text-input"
+                value={playerName}
+                onChange={(event) => setPlayerName(event.target.value)}
+                placeholder="Your name"
+                maxLength={18}
+              />
+              <button className="secondary-button" type="submit">
+                Save name
+              </button>
+            </form>
+            <div className="bot-grid">
+              {BOT_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  className="bot-card-button"
+                  disabled={!canEditSeats || (room?.players.length ?? 0) >= (room?.maxPlayers ?? 6)}
+                  onClick={() => handleAddBot(option.id)}
+                  type="button"
+                >
+                  <strong>{option.title}</strong>
+                  <span>{option.description}</span>
+                </button>
+              ))}
+            </div>
+            <div className="bot-list">
+              {botPlayers.length ? (
+                botPlayers.map((player) => (
+                  <div key={player.id} className="bot-list-item">
+                    <div>
+                      <strong>{player.name}</strong>
+                      <p>{player.botDifficulty}</p>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      disabled={!canEditSeats}
+                      onClick={() => handleRemoveBot(player.id)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p className="muted-text">Add at least one bot to start a local hand.</p>
+              )}
+            </div>
+          </section>
+          <ShowdownPanel showdown={room?.showdown} />
+          <ActionFeed actionLog={room?.actionLog} />
+        </aside>
+      </section>
+
+      <section className="action-dock">
+        {room?.canStartHand ? (
+          <div className="action-panel">
+            <div>
+              <span className="section-label">Local hand</span>
+              <h2>Deal the next hand</h2>
+              <p>Bots act automatically after you or each other.</p>
+            </div>
+            <button
+              className="primary-button"
+              disabled={botThinking}
+              onClick={handleStartHand}
+              type="button"
+            >
+              Start Hand
+            </button>
+          </div>
+        ) : room?.controls?.canAct ? (
+          <PlayerActionPanel
+            botThinking={botThinking}
+            callLabel={callLabel}
+            onAction={handleAction}
+            quickRaiseOptions={quickRaiseOptions}
+            raiseTarget={raiseTarget}
+            room={room}
+            setRaiseTarget={setRaiseTarget}
+            viewer={viewer}
+          />
+        ) : (
+          <div className="action-panel">
+            <div>
+              <span className="section-label">Table status</span>
+              <h2>{botThinking ? "Bots are acting..." : room?.tableMessage ?? "Waiting for local table"}</h2>
+              <p>
+                {viewer
+                  ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
+                  : "Set your name and add bots to begin."}
+              </p>
+            </div>
+            {!room?.players?.some((player) => player.isBot) ? (
+              <span className="status-pill is-offline">Add a bot to start</span>
+            ) : null}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 
-function CardFace({ card, backCardImage, placeholder = false }) {
-  if (placeholder) {
-    return <div className="card-face placeholder-card" />;
-  }
-
+function PlayerActionPanel({
+  botThinking = false,
+  callLabel,
+  onAction,
+  quickRaiseOptions,
+  raiseTarget,
+  room,
+  setRaiseTarget,
+  viewer
+}) {
   return (
-    <div className="card-face">
-      <img src={card?.image ?? backCardImage} alt={card?.code ?? "Card back"} />
+    <div className="action-panel action-panel-live">
+      <div className="action-summary">
+        <span className="section-label">Your action</span>
+        <h2>{viewer?.name}</h2>
+        <p>
+          Stack {formatChips(viewer?.chips ?? 0)}. Current contribution {formatChips(viewer?.streetContribution ?? 0)}.
+        </p>
+      </div>
+
+      <div className="action-buttons">
+        <button className="ghost-button" disabled={botThinking} onClick={() => onAction("fold")} type="button">
+          Fold
+        </button>
+        <button
+          className="secondary-button"
+          disabled={botThinking}
+          onClick={() => onAction(room.controls.canCall ? "call" : "check")}
+          type="button"
+        >
+          {callLabel}
+        </button>
+      </div>
+
+      {room.controls.canRaise ? (
+        <div className="raise-panel">
+          <div className="raise-header">
+            <span>{room.currentBet === 0 ? "Bet" : "Raise to"}</span>
+            <strong>{formatChips(raiseTarget)}</strong>
+          </div>
+          <input
+            className="raise-slider"
+            type="range"
+            min={room.controls.minRaiseTo}
+            max={room.controls.maxRaiseTo}
+            step="10"
+            value={raiseTarget}
+            onChange={(event) => setRaiseTarget(Number(event.target.value))}
+          />
+          <div className="raise-quick-row">
+            {quickRaiseOptions.map((option) => (
+              <button
+                key={option.label}
+                className="chip-button"
+                disabled={botThinking}
+                onClick={() => setRaiseTarget(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="raise-submit-row">
+            <input
+              className="amount-input"
+              type="number"
+              min={room.controls.minRaiseTo}
+              max={room.controls.maxRaiseTo}
+              step="10"
+              value={raiseTarget}
+              onChange={(event) =>
+                setRaiseTarget(
+                  clamp(Number(event.target.value), room.controls.minRaiseTo, room.controls.maxRaiseTo)
+                )
+              }
+            />
+            <button
+              className="primary-button"
+              disabled={botThinking}
+              onClick={() => onAction("raise", raiseTarget)}
+              type="button"
+            >
+              {room.currentBet === 0 ? "Bet" : "Raise"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
