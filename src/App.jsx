@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 
-import { ActionFeed, InviteCard, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
+import { ActionFeed, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
 import { SoloPokerSession } from "./soloSession.js";
 
 const ACTIVE_PHASES = new Set(["preflop", "flop", "turn", "river"]);
@@ -60,14 +60,6 @@ function loadSoloName() {
     return window.localStorage.getItem(SOLO_NAME_STORAGE_KEY) ?? "You";
   } catch {
     return "You";
-  }
-}
-
-function saveSoloName(value) {
-  try {
-    window.localStorage.setItem(SOLO_NAME_STORAGE_KEY, value);
-  } catch {
-    // Storage access is optional.
   }
 }
 
@@ -444,7 +436,6 @@ function RoomPage() {
         <TableSurface room={room} />
 
         <aside className="side-rail">
-          <InviteCard copied={copied} onCopy={handleCopyLink} shareUrl={shareUrl} />
           <ShowdownPanel showdown={room?.showdown} />
           <ActionFeed actionLog={room?.actionLog} />
         </aside>
@@ -517,7 +508,7 @@ function RoomPage() {
 
 function SoloPage() {
   const controllerRef = useRef(null);
-  const [playerName, setPlayerName] = useState(() => loadSoloName());
+  const [playerName] = useState(() => loadSoloName());
   const [room, setRoom] = useState(null);
   const [error, setError] = useState("");
   const [botThinking, setBotThinking] = useState(false);
@@ -554,17 +545,6 @@ function SoloPage() {
   const viewer = room?.players.find((player) => player.id === room.viewerPlayerId) ?? null;
   const quickRaiseOptions = buildQuickRaiseOptions(room, viewer);
   const canEditSeats = !isHandLive(room);
-  const botPlayers = room?.players.filter((player) => player.isBot) ?? [];
-
-  function handleSaveName(event) {
-    event.preventDefault();
-    const normalizedName = playerName.trim() || "You";
-
-    saveSoloName(normalizedName);
-    setPlayerName(normalizedName);
-    controllerRef.current?.ensureHuman(normalizedName);
-    setError("");
-  }
 
   function handleAddBot(difficulty) {
     if (!canEditSeats) {
@@ -577,15 +557,6 @@ function SoloPage() {
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to add bot.");
-    }
-  }
-
-  function handleRemoveBot(playerId) {
-    try {
-      controllerRef.current?.removePlayer(playerId);
-      setError("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to remove bot.");
     }
   }
 
@@ -626,7 +597,11 @@ function SoloPage() {
             Lobby
           </Link>
           <h1>Solo Table</h1>
-          <p>{botThinking ? "Bots are thinking..." : room?.tableMessage ?? "Preparing local table..."}</p>
+          <p>
+            {botThinking
+              ? "Bots are thinking..."
+              : `${playerName} is seated locally. Add bots from any open seat.`}
+          </p>
         </div>
 
         <div className="room-header-actions">
@@ -637,63 +612,29 @@ function SoloPage() {
       {error ? <div className="error-banner room-error">{error}</div> : null}
 
       <section className="table-layout">
-        <TableSurface room={room} />
+        <TableSurface
+          room={room}
+          renderEmptySeat={() => (
+            <div className="seat-card empty-seat empty-seat-bot">
+              <span className="empty-seat-label">Add bot</span>
+              <div className="empty-seat-actions">
+                {BOT_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    className="empty-seat-action"
+                    disabled={!canEditSeats || botThinking}
+                    onClick={() => handleAddBot(option.id)}
+                    type="button"
+                  >
+                    {option.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        />
 
         <aside className="side-rail">
-          <section className="rail-card">
-            <div className="rail-card-header">
-              <span className="section-label">Local mode</span>
-              <strong>Seat bots at the table</strong>
-            </div>
-            <form className="solo-name-form" onSubmit={handleSaveName}>
-              <input
-                className="text-input"
-                value={playerName}
-                onChange={(event) => setPlayerName(event.target.value)}
-                placeholder="Your name"
-                maxLength={18}
-              />
-              <button className="secondary-button" type="submit">
-                Save name
-              </button>
-            </form>
-            <div className="bot-grid">
-              {BOT_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  className="bot-card-button"
-                  disabled={!canEditSeats || (room?.players.length ?? 0) >= (room?.maxPlayers ?? 6)}
-                  onClick={() => handleAddBot(option.id)}
-                  type="button"
-                >
-                  <strong>{option.title}</strong>
-                  <span>{option.description}</span>
-                </button>
-              ))}
-            </div>
-            <div className="bot-list">
-              {botPlayers.length ? (
-                botPlayers.map((player) => (
-                  <div key={player.id} className="bot-list-item">
-                    <div>
-                      <strong>{player.name}</strong>
-                      <p>{player.botDifficulty}</p>
-                    </div>
-                    <button
-                      className="ghost-button"
-                      disabled={!canEditSeats}
-                      onClick={() => handleRemoveBot(player.id)}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <p className="muted-text">Add at least one bot to start a local hand.</p>
-              )}
-            </div>
-          </section>
           <ShowdownPanel showdown={room?.showdown} />
           <ActionFeed actionLog={room?.actionLog} />
         </aside>
@@ -735,7 +676,7 @@ function SoloPage() {
               <p>
                 {viewer
                   ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
-                  : "Set your name and add bots to begin."}
+                  : "Add bots from the open seats to begin."}
               </p>
             </div>
             {!room?.players?.some((player) => player.isBot) ? (

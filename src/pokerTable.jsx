@@ -26,7 +26,7 @@ export function formatChips(amount) {
   }).format(amount ?? 0);
 }
 
-export function TableSurface({ room, viewerPlayerId }) {
+export function TableSurface({ room, viewerPlayerId, renderEmptySeat }) {
   const viewerId = viewerPlayerId ?? room?.viewerPlayerId ?? null;
   const viewer = room?.players.find((player) => player.id === viewerId) ?? null;
   const viewerSeat = viewer?.seat ?? 0;
@@ -57,9 +57,11 @@ export function TableSurface({ room, viewerPlayerId }) {
                       isViewer={player.id === viewerId}
                     />
                   ) : (
-                    <div className="seat-card empty-seat">
-                      <span>Open seat</span>
-                    </div>
+                    renderEmptySeat?.(relativeSeat) ?? (
+                      <div className="seat-card empty-seat">
+                        <span>Open seat</span>
+                      </div>
+                    )
                   )}
                 </div>
               );
@@ -119,9 +121,11 @@ export function TableSurface({ room, viewerPlayerId }) {
                       isViewer={player.id === viewerId}
                     />
                   ) : (
-                    <div className="seat-card empty-seat">
-                      <span>Open seat</span>
-                    </div>
+                    renderEmptySeat?.(relativeSeat) ?? (
+                      <div className="seat-card empty-seat">
+                        <span>Open seat</span>
+                      </div>
+                    )
                   )}
                 </div>
               );
@@ -130,21 +134,6 @@ export function TableSurface({ room, viewerPlayerId }) {
         </div>
       </div>
     </div>
-  );
-}
-
-export function InviteCard({ shareUrl, copied, onCopy }) {
-  return (
-    <section className="rail-card">
-      <div className="rail-card-header">
-        <span className="section-label">Share</span>
-        <strong>Invite players</strong>
-      </div>
-      <p className="muted-text">{shareUrl}</p>
-      <button className="secondary-button wide-button" onClick={onCopy} type="button">
-        {copied ? "Copied" : "Copy invite link"}
-      </button>
-    </section>
   );
 }
 
