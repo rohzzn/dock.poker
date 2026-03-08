@@ -25,6 +25,100 @@ const BOT_OPTIONS = [
     description: "More aggressive pressure."
   }
 ];
+const RULE_FLOW = [
+  {
+    title: "Pre-flop",
+    description: "Each player gets two private cards and the first betting round starts after the blinds."
+  },
+  {
+    title: "Flop",
+    description: "Three community cards hit the table and betting opens again."
+  },
+  {
+    title: "Turn",
+    description: "A fourth community card is revealed, then another betting round begins."
+  },
+  {
+    title: "River",
+    description: "The fifth and final community card lands before the last round of betting."
+  },
+  {
+    title: "Showdown",
+    description: "Anyone still in the hand makes the best five-card hand from any combination of the seven cards."
+  }
+];
+const RULE_ACTIONS = [
+  {
+    title: "Check",
+    description: "Pass the action when no bet is facing you."
+  },
+  {
+    title: "Call",
+    description: "Match the current bet to stay in the hand."
+  },
+  {
+    title: "Raise",
+    description: "Increase the price of the hand and put pressure on the table."
+  },
+  {
+    title: "Fold",
+    description: "Give up the hand and preserve the chips you have left."
+  }
+];
+const RULE_SAMPLE_HOLE_CARDS = ["AS", "KH"];
+const RULE_SAMPLE_BOARD = ["QC", "JD", "9S", "5H", "2D"];
+const HAND_LEADERBOARD = [
+  {
+    title: "Royal Flush",
+    description: "A, K, Q, J, 10 of the same suit.",
+    codes: ["AS", "KS", "QS", "JS", "0S"]
+  },
+  {
+    title: "Straight Flush",
+    description: "Five cards in sequence, all the same suit.",
+    codes: ["9H", "8H", "7H", "6H", "5H"]
+  },
+  {
+    title: "Four of a Kind",
+    description: "Four cards of the same rank.",
+    codes: ["9S", "9H", "9D", "9C", "2H"]
+  },
+  {
+    title: "Full House",
+    description: "Three of a kind plus a pair.",
+    codes: ["KD", "KS", "KC", "5H", "5C"]
+  },
+  {
+    title: "Flush",
+    description: "Five cards of the same suit.",
+    codes: ["AH", "QH", "9H", "5H", "2H"]
+  },
+  {
+    title: "Straight",
+    description: "Five cards in sequence, mixed suits allowed.",
+    codes: ["9S", "8D", "7H", "6C", "5S"]
+  },
+  {
+    title: "Three of a Kind",
+    description: "Three cards of the same rank.",
+    codes: ["7S", "7D", "7C", "QH", "2D"]
+  },
+  {
+    title: "Two Pair",
+    description: "Two separate pairs in the same hand.",
+    codes: ["JS", "JD", "4C", "4H", "9D"]
+  },
+  {
+    title: "One Pair",
+    description: "Two cards of the same rank.",
+    codes: ["AC", "AD", "0H", "7S", "3C"]
+  },
+  {
+    title: "High Card",
+    description: "When nothing else lands, the highest card plays.",
+    codes: ["AS", "QD", "9H", "6C", "2S"]
+  }
+];
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -123,6 +217,265 @@ function buildQuickRaiseOptions(room, viewer) {
       value: clamp(option.value, minimum, maximum)
     }))
     .filter((option, index, collection) => collection.findIndex((item) => item.value === option.value) === index);
+}
+
+function getDeckStaticImage(code) {
+  return "https://deckofcardsapi.com/static/img/" + code + ".png";
+}
+
+function PokerRulesModal({ open, onClose }) {
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="rules-overlay" onClick={onClose} role="presentation">
+      <section
+        aria-labelledby="rules-title"
+        aria-modal="true"
+        className="rules-dialog"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="rules-dialog-header">
+          <div>
+            <span className="section-label">Table guide</span>
+            <h2 id="rules-title">How Dock Poker works</h2>
+            <p>
+              Texas Hold&apos;em uses two private hole cards, five shared community cards, and the best five-card hand at
+              showdown.
+            </p>
+          </div>
+          <button aria-label="Close rules" className="ghost-button rules-close-button" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+
+        <div className="rules-hero">
+          <div className="rules-hero-copy">
+            <span className="section-label">Deck of Cards API</span>
+            <h3>Real card art, clean hand flow</h3>
+            <p>
+              Each hand is shuffled and drawn through the Deck of Cards API, then played as a live Hold&apos;em table with
+              blinds, betting rounds, and showdown.
+            </p>
+            <div className="rules-pill-row">
+              <span>2 hole cards</span>
+              <span>5 community cards</span>
+              <span>Best 5-card hand wins</span>
+            </div>
+          </div>
+
+          <div className="rules-card-stage">
+            <div className="rules-card-row">
+              {RULE_SAMPLE_HOLE_CARDS.map((code) => (
+                <div className="card-face rules-card-face" key={code}>
+                  <img alt={"Example hole card " + code} src={getDeckStaticImage(code)} />
+                </div>
+              ))}
+            </div>
+            <div className="rules-card-row rules-card-row-board">
+              {RULE_SAMPLE_BOARD.map((code) => (
+                <div className="card-face rules-card-face" key={code}>
+                  <img alt={"Example board card " + code} src={getDeckStaticImage(code)} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="rules-grid">
+          <section className="rules-panel">
+            <span className="section-label">Round flow</span>
+            <div className="rules-list">
+              {RULE_FLOW.map((item) => (
+                <article className="rules-list-item" key={item.title}>
+                  <strong>{item.title}</strong>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rules-panel">
+            <span className="section-label">Actions</span>
+            <div className="rules-list">
+              {RULE_ACTIONS.map((item) => (
+                <article className="rules-list-item" key={item.title}>
+                  <strong>{item.title}</strong>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rules-panel">
+            <span className="section-label">Winning the pot</span>
+            <div className="rules-list">
+              <article className="rules-list-item">
+                <strong>Make the best five</strong>
+                <p>You can use both hole cards, one, or none. The best five-card combination plays.</p>
+              </article>
+              <article className="rules-list-item">
+                <strong>Split pots happen</strong>
+                <p>If two or more players tie, the pot is split as evenly as possible.</p>
+              </article>
+              <article className="rules-list-item">
+                <strong>Blinds keep the action moving</strong>
+                <p>
+                  The button rotates, blinds post automatically, and betting continues until one player wins or the hand
+                  reaches showdown.
+                </p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function HomeRulesSection() {
+  return (
+    <section className="home-rules-shell">
+      <div className="home-rules-panel">
+        <div className="home-rules-intro">
+          <div className="home-rules-copy">
+            <span className="section-label">How to play</span>
+            <h2>Learn the table before you deal.</h2>
+            <p>
+              Dock Poker follows classic Texas Hold&apos;em. You get two private cards, share five community cards with the
+              table, and make the best five-card hand by the time the action reaches showdown.
+            </p>
+            <div className="rules-pill-row">
+              <span>Blinds rotate every hand</span>
+              <span>Use any 5 of 7 cards</span>
+              <span>Last player standing wins</span>
+            </div>
+          </div>
+
+          <div className="rules-card-stage home-rules-card-stage">
+            <div className="home-rules-demo-group">
+              <span className="section-label">Hole cards</span>
+              <div className="rules-card-row">
+                {RULE_SAMPLE_HOLE_CARDS.map((code) => (
+                  <div className="card-face rules-card-face" key={code}>
+                    <img alt={"Example hole card " + code} src={getDeckStaticImage(code)} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="home-rules-demo-group">
+              <span className="section-label">Board</span>
+              <div className="rules-card-row rules-card-row-board">
+                {RULE_SAMPLE_BOARD.map((code) => (
+                  <div className="card-face rules-card-face" key={code}>
+                    <img alt={"Example board card " + code} src={getDeckStaticImage(code)} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="home-rules-grid">
+          <section className="rules-panel">
+            <span className="section-label">Round flow</span>
+            <div className="rules-list">
+              {RULE_FLOW.map((item) => (
+                <article className="rules-list-item" key={item.title}>
+                  <strong>{item.title}</strong>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rules-panel">
+            <span className="section-label">Actions</span>
+            <div className="rules-list">
+              {RULE_ACTIONS.map((item) => (
+                <article className="rules-list-item" key={item.title}>
+                  <strong>{item.title}</strong>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="rules-panel">
+            <span className="section-label">Table basics</span>
+            <div className="rules-list">
+              <article className="rules-list-item">
+                <strong>Best five cards only</strong>
+                <p>You can use both hole cards, one, or none. Only the strongest five-card hand counts.</p>
+              </article>
+              <article className="rules-list-item">
+                <strong>Blinds start the action</strong>
+                <p>The small blind and big blind post automatically before cards are dealt.</p>
+              </article>
+              <article className="rules-list-item">
+                <strong>Split pots are possible</strong>
+                <p>If players tie with the same best hand, the pot is split between them.</p>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <div className="hand-rank-header">
+          <div>
+            <span className="section-label">Hand leaderboard</span>
+            <h2>Best hands from highest to lowest</h2>
+            <p>Keep this ranking guide close when the table gets to showdown.</p>
+          </div>
+        </div>
+
+        <div className="hand-rank-grid">
+          {HAND_LEADERBOARD.map((hand, index) => (
+            <article className="hand-rank-card" key={hand.title}>
+              <div className="hand-rank-copy">
+                <span className="hand-rank-position">#{index + 1}</span>
+                <div>
+                  <strong>{hand.title}</strong>
+                  <p>{hand.description}</p>
+                </div>
+              </div>
+              <div className="hand-rank-cards">
+                {hand.codes.map((code) => (
+                  <div className="card-face rules-card-face" key={code}>
+                    <img alt={hand.title + " example " + code} src={getDeckStaticImage(code)} />
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function App() {
@@ -244,6 +597,7 @@ function HomePage() {
           </div>
         </div>
       </section>
+      <HomeRulesSection />
     </main>
   );
 }
@@ -259,6 +613,7 @@ function RoomPage() {
   const [connected, setConnected] = useState(false);
   const [copied, setCopied] = useState(false);
   const [raiseTarget, setRaiseTarget] = useState(0);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const socketRef = useRef(null);
   const copyTimerRef = useRef(null);
 
@@ -460,9 +815,14 @@ function RoomPage() {
       <div className="home-noise" />
       <header className="room-header">
         <div>
-          <Link className="room-link" to="/">
-            Lobby
-          </Link>
+          <div className="room-header-topline">
+            <Link className="room-link" to="/">
+              Lobby
+            </Link>
+            <button className="header-chip-button" onClick={() => setRulesOpen(true)} type="button">
+              Rules
+            </button>
+          </div>
           <h1>Room {roomId}</h1>
           <p>{room?.tableMessage ?? "Connecting to the table..."}</p>
         </div>
@@ -588,6 +948,7 @@ function RoomPage() {
           </ActionRailCard>
         </aside>
       </section>
+      <PokerRulesModal onClose={() => setRulesOpen(false)} open={rulesOpen} />
     </main>
   );
 }
@@ -599,6 +960,7 @@ function SoloPage() {
   const [error, setError] = useState("");
   const [botThinking, setBotThinking] = useState(false);
   const [raiseTarget, setRaiseTarget] = useState(0);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   useRoomSounds(room);
 
@@ -690,9 +1052,14 @@ function SoloPage() {
       <div className="home-noise" />
       <header className="room-header">
         <div>
-          <Link className="room-link" to="/">
-            Lobby
-          </Link>
+          <div className="room-header-topline">
+            <Link className="room-link" to="/">
+              Lobby
+            </Link>
+            <button className="header-chip-button" onClick={() => setRulesOpen(true)} type="button">
+              Rules
+            </button>
+          </div>
           <h1>Solo Table</h1>
           <p>
             {botThinking
@@ -789,6 +1156,7 @@ function SoloPage() {
           </ActionRailCard>
         </aside>
       </section>
+      <PokerRulesModal onClose={() => setRulesOpen(false)} open={rulesOpen} />
     </main>
   );
 }
