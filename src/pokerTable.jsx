@@ -163,8 +163,9 @@ export function ShowdownPanel({ showdown }) {
   );
 }
 
-export function ActionFeed({ actionLog }) {
+export function ActionLog({ actionLog }) {
   const logRef = useRef(null);
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     const logElement = logRef.current;
@@ -173,24 +174,33 @@ export function ActionFeed({ actionLog }) {
       return;
     }
 
-    logElement.scrollTop = logElement.scrollHeight;
+    if (stickToBottomRef.current) {
+      logElement.scrollTop = logElement.scrollHeight;
+    }
   }, [actionLog]);
 
+  function handleScroll() {
+    const logElement = logRef.current;
+
+    if (!logElement) {
+      return;
+    }
+
+    const distanceFromBottom =
+      logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight;
+
+    stickToBottomRef.current = distanceFromBottom < 24;
+  }
+
   return (
-    <section className="rail-card rail-card-feed">
-      <div className="rail-card-header">
-        <span className="section-label">Action</span>
-        <strong>Table feed</strong>
-      </div>
-      <div ref={logRef} className="log-list">
-        {(actionLog ?? []).map((entry) => (
-          <div key={entry.id} className="log-entry">
-            {entry.text}
-          </div>
-        ))}
-        {!actionLog?.length ? <p className="muted-text">Actions will appear here.</p> : null}
-      </div>
-    </section>
+    <div ref={logRef} className="log-list" onScroll={handleScroll}>
+      {(actionLog ?? []).map((entry) => (
+        <div key={entry.id} className="log-entry">
+          {entry.text}
+        </div>
+      ))}
+      {!actionLog?.length ? <p className="muted-text">Actions will appear here.</p> : null}
+    </div>
   );
 }
 

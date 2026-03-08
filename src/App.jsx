@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 
-import { ActionFeed, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
+import { ActionLog, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
 import { SoloPokerSession } from "./soloSession.js";
 
 const ACTIVE_PHASES = new Set(["preflop", "flop", "turn", "river"]);
@@ -437,70 +437,57 @@ function RoomPage() {
 
         <aside className="side-rail">
           <ShowdownPanel showdown={room?.showdown} />
-          <ActionFeed actionLog={room?.actionLog} />
-        </aside>
-      </section>
-
-      <section className="action-dock">
-        {!session?.name ? (
-          <form className="join-panel" onSubmit={handleJoinTable}>
-            <div>
-              <span className="section-label">Seat</span>
-              <h2>Take your place at the table</h2>
-              <p>Choose the name that will appear in the room.</p>
-            </div>
-            <div className="join-panel-controls">
-              <input
-                className="text-input"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="Display name"
-                maxLength={18}
+          <FeedRailCard actionLog={room?.actionLog} />
+          <ActionRailCard>
+            {!session?.name ? (
+              <form className="rail-action-form" onSubmit={handleJoinTable}>
+                <p className="muted-text">Choose the name that will appear in the room.</p>
+                <input
+                  className="text-input"
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="Display name"
+                  maxLength={18}
+                />
+                <button className="primary-button" type="submit">
+                  Join Table
+                </button>
+              </form>
+            ) : room?.canStartHand ? (
+              <div className="rail-action-stack">
+                <p className="muted-text">Everyone seated with chips will be dealt in.</p>
+                <button className="primary-button" onClick={handleStartHand} type="button">
+                  Start Hand
+                </button>
+              </div>
+            ) : room?.controls?.canAct ? (
+              <PlayerActionPanel
+                callLabel={callLabel}
+                embedded
+                onAction={handleAction}
+                quickRaiseOptions={quickRaiseOptions}
+                raiseTarget={raiseTarget}
+                room={room}
+                setRaiseTarget={setRaiseTarget}
+                viewer={viewer}
               />
-              <button className="primary-button" type="submit">
-                Join Table
-              </button>
-            </div>
-          </form>
-        ) : room?.canStartHand ? (
-          <div className="action-panel">
-            <div>
-              <span className="section-label">Host control</span>
-              <h2>Deal the next hand</h2>
-              <p>Everyone seated with chips will be dealt in.</p>
-            </div>
-            <button className="primary-button" onClick={handleStartHand} type="button">
-              Start Hand
-            </button>
-          </div>
-        ) : room?.controls?.canAct ? (
-          <PlayerActionPanel
-            callLabel={callLabel}
-            onAction={handleAction}
-            quickRaiseOptions={quickRaiseOptions}
-            raiseTarget={raiseTarget}
-            room={room}
-            setRaiseTarget={setRaiseTarget}
-            viewer={viewer}
-          />
-        ) : (
-          <div className="action-panel">
-            <div>
-              <span className="section-label">Table status</span>
-              <h2>{room?.tableMessage ?? "Waiting for room state"}</h2>
-              <p>
-                {viewer
-                  ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
-                  : "Join the table from this device to receive your own seat and cards."}
-              </p>
-            </div>
-            {room?.phase === "showdown" && room?.canStartHand ? (
-              <button className="primary-button" onClick={handleStartHand} type="button">
-                Next Hand
-              </button>
-            ) : null}
-          </div>
-        )}
+            ) : (
+              <div className="rail-action-stack">
+                <h3>{room?.tableMessage ?? "Waiting for room state"}</h3>
+                <p className="muted-text">
+                  {viewer
+                    ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
+                    : "Join the table from this device to receive your own seat and cards."}
+                </p>
+                {room?.phase === "showdown" && room?.canStartHand ? (
+                  <button className="primary-button" onClick={handleStartHand} type="button">
+                    Next Hand
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </ActionRailCard>
+        </aside>
       </section>
     </main>
   );
@@ -636,54 +623,47 @@ function SoloPage() {
 
         <aside className="side-rail">
           <ShowdownPanel showdown={room?.showdown} />
-          <ActionFeed actionLog={room?.actionLog} />
+          <FeedRailCard actionLog={room?.actionLog} />
+          <ActionRailCard>
+            {room?.canStartHand ? (
+              <div className="rail-action-stack">
+                <p className="muted-text">Bots act automatically after you or each other.</p>
+                <button
+                  className="primary-button"
+                  disabled={botThinking}
+                  onClick={handleStartHand}
+                  type="button"
+                >
+                  Start Hand
+                </button>
+              </div>
+            ) : room?.controls?.canAct ? (
+              <PlayerActionPanel
+                botThinking={botThinking}
+                callLabel={callLabel}
+                embedded
+                onAction={handleAction}
+                quickRaiseOptions={quickRaiseOptions}
+                raiseTarget={raiseTarget}
+                room={room}
+                setRaiseTarget={setRaiseTarget}
+                viewer={viewer}
+              />
+            ) : (
+              <div className="rail-action-stack">
+                <h3>{botThinking ? "Bots are acting..." : room?.tableMessage ?? "Waiting for local table"}</h3>
+                <p className="muted-text">
+                  {viewer
+                    ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
+                    : "Add bots from the open seats to begin."}
+                </p>
+                {!room?.players?.some((player) => player.isBot) ? (
+                  <span className="status-pill is-offline">Add a bot to start</span>
+                ) : null}
+              </div>
+            )}
+          </ActionRailCard>
         </aside>
-      </section>
-
-      <section className="action-dock">
-        {room?.canStartHand ? (
-          <div className="action-panel">
-            <div>
-              <span className="section-label">Local hand</span>
-              <h2>Deal the next hand</h2>
-              <p>Bots act automatically after you or each other.</p>
-            </div>
-            <button
-              className="primary-button"
-              disabled={botThinking}
-              onClick={handleStartHand}
-              type="button"
-            >
-              Start Hand
-            </button>
-          </div>
-        ) : room?.controls?.canAct ? (
-          <PlayerActionPanel
-            botThinking={botThinking}
-            callLabel={callLabel}
-            onAction={handleAction}
-            quickRaiseOptions={quickRaiseOptions}
-            raiseTarget={raiseTarget}
-            room={room}
-            setRaiseTarget={setRaiseTarget}
-            viewer={viewer}
-          />
-        ) : (
-          <div className="action-panel">
-            <div>
-              <span className="section-label">Table status</span>
-              <h2>{botThinking ? "Bots are acting..." : room?.tableMessage ?? "Waiting for local table"}</h2>
-              <p>
-                {viewer
-                  ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
-                  : "Add bots from the open seats to begin."}
-              </p>
-            </div>
-            {!room?.players?.some((player) => player.isBot) ? (
-              <span className="status-pill is-offline">Add a bot to start</span>
-            ) : null}
-          </div>
-        )}
       </section>
     </main>
   );
@@ -692,6 +672,7 @@ function SoloPage() {
 function PlayerActionPanel({
   botThinking = false,
   callLabel,
+  embedded = false,
   onAction,
   quickRaiseOptions,
   raiseTarget,
@@ -700,7 +681,7 @@ function PlayerActionPanel({
   viewer
 }) {
   return (
-    <div className="action-panel action-panel-live">
+    <div className={`action-panel action-panel-live ${embedded ? "action-panel-embedded" : ""}`}>
       <div className="action-summary">
         <span className="section-label">Your action</span>
         <h2>{viewer?.name}</h2>
@@ -777,6 +758,30 @@ function PlayerActionPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function FeedRailCard({ actionLog }) {
+  return (
+    <section className="rail-card rail-card-feed">
+      <div className="rail-card-header">
+        <span className="section-label">Table feed</span>
+        <strong>Latest actions</strong>
+      </div>
+      <ActionLog actionLog={actionLog} />
+    </section>
+  );
+}
+
+function ActionRailCard({ children }) {
+  return (
+    <section className="rail-card rail-card-action">
+      <div className="rail-card-header">
+        <span className="section-label">Action</span>
+        <strong>Table control</strong>
+      </div>
+      {children}
+    </section>
   );
 }
 
