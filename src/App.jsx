@@ -113,7 +113,7 @@ function buildQuickRaiseOptions(room, viewer) {
       value: viewer.streetContribution + toCall + room.pot
     },
     {
-      label: "All in",
+      label: "All",
       value: maximum
     }
   ]
@@ -181,10 +181,10 @@ function HomePage() {
       <div className="home-noise" />
       <section className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">Luxe Hold&apos;em</p>
-          <h1>Multiplayer poker with private room URLs and a clean table-first UI.</h1>
+          <p className="eyebrow">Dock Poker</p>
+          <h1>Play Texas Hold&apos;em online with friends.</h1>
           <p className="hero-text">
-            Create a room, share the link, deal Texas Hold&apos;em through the Deck of Cards API, or stay local with bots.
+            Create a private table, join with a room code, or play a local game with bots whenever you want a quick hand.
           </p>
           <div className="hero-actions">
             <button className="primary-button" onClick={handleCreateRoom} disabled={creating} type="button">
@@ -211,14 +211,14 @@ function HomePage() {
 
         <div className="hero-preview">
           <div className="preview-card floating-card preview-card-01">
-            <span className="preview-label">Room URLs</span>
-            <strong>Private table links</strong>
-            <p>Send one URL. Every player lands in the same shared state.</p>
+            <span className="preview-label">Private tables</span>
+            <strong>Invite your table</strong>
+            <p>Create a room, share the link, and get everyone into the same game in seconds.</p>
           </div>
           <div className="preview-card floating-card preview-card-02">
-            <span className="preview-label">Real multiplayer</span>
-            <strong>Socket-synced turns</strong>
-            <p>Blinds, betting rounds, board cards, pot, and showdown update live.</p>
+            <span className="preview-label">Table-first play</span>
+            <strong>Clean from deal to showdown</strong>
+            <p>Follow the board, pot, and action without fighting the screen or losing the flow of the hand.</p>
           </div>
           <div className="preview-card preview-card-wide">
             <div className="chip-line">
@@ -228,16 +228,16 @@ function HomePage() {
             </div>
             <div className="preview-metrics">
               <div>
-                <small>Style</small>
-                <strong>Minimal</strong>
-              </div>
-              <div>
                 <small>Game</small>
                 <strong>Texas Hold&apos;em</strong>
               </div>
               <div>
+                <small>Play</small>
+                <strong>Private rooms</strong>
+              </div>
+              <div>
                 <small>Modes</small>
-                <strong>Solo + Rooms</strong>
+                <strong>Solo + Friends</strong>
               </div>
             </div>
           </div>
@@ -404,7 +404,7 @@ function RoomPage() {
   const callLabel =
     room?.controls?.canCall && viewer
       ? room.controls.callAmount < Math.max(0, room.currentBet - viewer.streetContribution)
-        ? `All in ${formatChips(room.controls.callAmount)}`
+        ? `All ${formatChips(room.controls.callAmount)}`
         : `Call ${formatChips(room.controls.callAmount)}`
       : "Check";
 
@@ -571,7 +571,7 @@ function SoloPage() {
   const callLabel =
     room?.controls?.canCall && viewer
       ? room.controls.callAmount < Math.max(0, room.currentBet - viewer.streetContribution)
-        ? `All in ${formatChips(room.controls.callAmount)}`
+        ? `All ${formatChips(room.controls.callAmount)}`
         : `Call ${formatChips(room.controls.callAmount)}`
       : "Check";
 
