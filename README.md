@@ -47,50 +47,6 @@ The game uses the [Deck of Cards API](https://deckofcardsapi.com/) for shuffle a
 - Add bots directly to open seats
 - Choose bot difficulty per seat: easy, medium, or hard
 
-## Local Development
-
-### Requirements
-
-- Node.js 22 or newer recommended
-- npm
-
-### Install
-
-```bash
-npm ci
-```
-
-### Run in development
-
-```bash
-npm run dev
-```
-
-This starts:
-
-- the Vite client on `http://localhost:5173`
-- the Node server on `http://localhost:3001`
-
-### Build for production
-
-```bash
-npm run build
-```
-
-### Start the production server
-
-```bash
-npm start
-```
-
-The production server serves the built client and the multiplayer backend from the same process.
-
-## Scripts
-
-- `npm run dev` - run client and server together for development
-- `npm run build` - build the frontend
-- `npm test` - run server-side game tests
-- `npm start` - run the production server
 
 ## Project Structure
 
@@ -110,27 +66,6 @@ server/data/rooms.json
 
 That lets rooms survive a server restart on a traditional host such as EC2.
 
-## Production Notes
-
-- The app expects a long-running Node server for multiplayer
-- Socket.IO makes it a better fit for EC2, a VPS, Render, Railway, or Fly than pure serverless hosting
-- On production, place Nginx or another reverse proxy in front of the Node server
-- Make sure ports `80` and `443` are open if you are serving the app publicly
-
-## Testing
-
-Current tests cover core engine behavior, including:
-
-- failed hand start rollback
-- reveal retry and hand resume flow
-- room export and import across restarts
-- main pot and side pot showdown resolution
-
-Run them with:
-
-```bash
-npm test
-```
 
 ## Notes
 
