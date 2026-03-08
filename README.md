@@ -4,6 +4,9 @@ Clean online Texas Hold'em for private games with friends, plus a local solo mod
 
 Live site: [https://dock.poker](https://dock.poker)
 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/35606ab1-dc22-4136-9957-742f59055043" />
+
+
 ## Overview
 
 Dock Poker is a table-first poker app built for quick private games. Create a room, share the URL, join from different devices, and play a synced hand in real time. If you just want to play instantly, solo mode lets you seat bots locally at the same table.
