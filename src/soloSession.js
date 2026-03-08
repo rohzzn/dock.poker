@@ -337,6 +337,12 @@ export class SoloPokerSession {
     await this.runBots();
   }
 
+  async resumeHand() {
+    await this.manager.resumeHand(SOLO_HUMAN_SOCKET_ID);
+    this.sync();
+    await this.runBots();
+  }
+
   async handleHumanAction(payload) {
     await this.manager.handleAction(SOLO_HUMAN_SOCKET_ID, payload);
     this.sync();

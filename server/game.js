@@ -12,6 +12,15 @@ const BIG_BLIND = 20;
 const MAX_LOG_ENTRIES = 60;
 const ROOM_TTL_MS = 1000 * 60 * 60 * 6;
 const BACK_CARD_IMAGE = "https://deckofcardsapi.com/static/img/back.png";
+const LIVE_PHASES = new Set(["preflop", "flop", "turn", "river"]);
+
+function cloneValue(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+}
 
 function cleanName(value) {
   return `${value ?? ""}`.trim().replace(/\s+/g, " ").slice(0, 18) || "Player";
@@ -32,6 +41,33 @@ function addLog(room, text) {
     text
   });
   room.actionLog = room.actionLog.slice(-MAX_LOG_ENTRIES);
+}
+
+function restoreRoomSnapshot(room, snapshot) {
+  for (const key of Object.keys(room)) {
+    delete room[key];
+  }
+
+  Object.assign(room, cloneValue(snapshot));
+}
+
+function getPendingRevealStreet(phase) {
+  switch (phase) {
+    case "preflop":
+      return "flop";
+    case "flop":
+      return "turn";
+    case "turn":
+      return "river";
+    default:
+      return null;
+  }
+}
+
+function buildRevealRetryMessage(street, cause) {
+  const prefix = street ? `Unable to reveal the ${street}.` : "Unable to continue the hand.";
+  const detail = cause instanceof Error ? cause.message : "Deck service unavailable.";
+  return `${prefix} ${detail}`;
 }
 
 function getPlayersInSeatOrder(room, filter = () => true) {
@@ -127,6 +163,10 @@ function resetStreet(room) {
 }
 
 function buildTableMessage(room) {
+  if (room.pendingDeckMessage) {
+    return room.pendingDeckMessage;
+  }
+
   if (room.phase === "waiting") {
     if (getEligiblePlayers(room).length < 2) {
       return "Share the room URL. Two players are needed to deal.";
@@ -167,9 +207,13 @@ function getWinnersInSeatOrder(room, winners) {
 }
 
 export class PokerRoomManager {
-  constructor() {
+  constructor({ deckApi } = {}) {
     this.rooms = new Map();
     this.socketIndex = new Map();
+    this.deckApi = deckApi ?? {
+      createDeck,
+      drawCards
+    };
   }
 
   createRoom() {
@@ -199,6 +243,8 @@ export class PokerRoomManager {
       currentBet: 0,
       minimumRaise: BIG_BLIND,
       currentTurnPlayerId: null,
+      pendingReveal: null,
+      pendingDeckMessage: "",
       showdown: null,
       actionLog: []
     };
@@ -216,8 +262,54 @@ export class PokerRoomManager {
     return this.socketIndex.get(socketId)?.roomId ?? null;
   }
 
+  exportRooms() {
+    return [...this.rooms.values()].map((room) => {
+      const snapshot = cloneValue(room);
+
+      snapshot.players = snapshot.players.map((player) => ({
+        ...player,
+        connected: false,
+        socketId: null
+      }));
+
+      return snapshot;
+    });
+  }
+
+  importRooms(rooms = []) {
+    this.rooms.clear();
+    this.socketIndex.clear();
+
+    for (const rawRoom of rooms) {
+      if (!rawRoom?.id) {
+        continue;
+      }
+
+      const room = cloneValue(rawRoom);
+      room.maxPlayers = room.maxPlayers ?? MAX_PLAYERS;
+      room.smallBlind = room.smallBlind ?? SMALL_BLIND;
+      room.bigBlind = room.bigBlind ?? BIG_BLIND;
+      room.minimumRaise = room.minimumRaise ?? BIG_BLIND;
+      room.communityCards = room.communityCards ?? [];
+      room.actionLog = room.actionLog ?? [];
+      room.showdown = room.showdown ?? null;
+      room.pendingReveal = room.pendingReveal ?? null;
+      room.pendingDeckMessage = room.pendingDeckMessage ?? "";
+      room.players = (room.players ?? []).map((player) => ({
+        ...player,
+        connected: false,
+        socketId: null,
+        isBot: Boolean(player.isBot),
+        botDifficulty: player.botDifficulty ?? null
+      }));
+
+      this.rooms.set(room.id, room);
+    }
+  }
+
   pruneRooms() {
     const now = Date.now();
+    let removedCount = 0;
 
     for (const [roomId, room] of this.rooms.entries()) {
       const hasConnectedPlayers = room.players.some((player) => player.connected);
@@ -225,8 +317,11 @@ export class PokerRoomManager {
 
       if (!hasConnectedPlayers && isExpired) {
         this.rooms.delete(roomId);
+        removedCount += 1;
       }
     }
+
+    return removedCount;
   }
 
   joinRoom({ roomId, socketId, name, playerId }) {
@@ -294,6 +389,25 @@ export class PokerRoomManager {
     return { room, player };
   }
 
+  leaveSeat(socketId) {
+    const { room, player } = this.requirePlayerContext(socketId);
+
+    if (this.isHandLive(room) && player.inHand) {
+      throw new Error("Finish the current hand before leaving the table.");
+    }
+
+    if (player.socketId) {
+      this.socketIndex.delete(player.socketId);
+    }
+
+    room.players = room.players.filter((candidate) => candidate.id !== player.id);
+    addLog(room, `${player.name} left the table`);
+    this.promoteHost(room);
+    room.updatedAt = Date.now();
+
+    return { room, playerId: player.id };
+  }
+
   removePlayer(roomId, playerId) {
     const room = this.getRoom(roomId);
 
@@ -356,7 +470,13 @@ export class PokerRoomManager {
 
     if (this.isHandLive(room) && room.currentTurnPlayerId === player.id) {
       const autoAction = room.currentBet > player.streetContribution ? "fold" : "check";
-      await this.applyAction(room, player, { type: autoAction }, { auto: true });
+      const snapshot = cloneValue(room);
+
+      try {
+        await this.applyAction(room, player, { type: autoAction }, { auto: true });
+      } catch (error) {
+        restoreRoomSnapshot(room, snapshot);
+      }
     }
 
     return room;
@@ -364,6 +484,7 @@ export class PokerRoomManager {
 
   async startHand(socketId) {
     const { room, player } = this.requirePlayerContext(socketId);
+    const snapshot = cloneValue(room);
 
     if (room.hostId !== player.id) {
       throw new Error("Only the host can start the next hand.");
@@ -379,81 +500,118 @@ export class PokerRoomManager {
       throw new Error("At least two players with chips are required.");
     }
 
-    room.handNumber += 1;
-    room.phase = "preflop";
-    room.deckId = null;
-    room.communityCards = [];
-    room.pot = 0;
-    room.currentBet = 0;
-    room.minimumRaise = BIG_BLIND;
-    room.currentTurnPlayerId = null;
-    room.showdown = null;
-    room.smallBlindPlayerId = null;
-    room.bigBlindPlayerId = null;
-    room.updatedAt = Date.now();
+    try {
+      room.handNumber += 1;
+      room.phase = "preflop";
+      room.deckId = null;
+      room.communityCards = [];
+      room.pot = 0;
+      room.currentBet = 0;
+      room.minimumRaise = BIG_BLIND;
+      room.currentTurnPlayerId = null;
+      room.pendingReveal = null;
+      room.pendingDeckMessage = "";
+      room.showdown = null;
+      room.smallBlindPlayerId = null;
+      room.bigBlindPlayerId = null;
+      room.updatedAt = Date.now();
 
-    for (const seatedPlayer of room.players) {
-      resetPlayerForHand(seatedPlayer);
+      for (const seatedPlayer of room.players) {
+        resetPlayerForHand(seatedPlayer);
+      }
+
+      room.dealerSeat = getNextPlayerAfterSeat(
+        room,
+        room.dealerSeat,
+        (candidate) => candidate.chips > 0 && candidate.connected
+      ).seat;
+
+      for (const seatedPlayer of eligiblePlayers) {
+        seatedPlayer.inHand = true;
+      }
+
+      const dealer = getPlayerBySeat(room, room.dealerSeat);
+      const smallBlindPlayer =
+        eligiblePlayers.length === 2
+          ? dealer
+          : getNextPlayerAfterSeat(room, room.dealerSeat, (candidate) => candidate.inHand);
+      const bigBlindPlayer = getNextPlayerAfterSeat(room, smallBlindPlayer.seat, (candidate) => candidate.inHand);
+
+      room.smallBlindPlayerId = smallBlindPlayer.id;
+      room.bigBlindPlayerId = bigBlindPlayer.id;
+
+      const deck = await this.deckApi.createDeck(1);
+      room.deckId = deck.deck_id;
+
+      const dealOrder = getPlayersStartingAfterSeat(room, smallBlindPlayer.seat - 1, (candidate) => candidate.inHand);
+      const holeCardCount = dealOrder.length * 2;
+      const drawResponse = await this.deckApi.drawCards(room.deckId, holeCardCount);
+
+      drawResponse.cards.forEach((card, index) => {
+        const recipient = dealOrder[index % dealOrder.length];
+        recipient.holeCards.push(card);
+      });
+
+      const smallBlindPosted = postChips(room, smallBlindPlayer, SMALL_BLIND);
+      const bigBlindPosted = postChips(room, bigBlindPlayer, BIG_BLIND);
+
+      smallBlindPlayer.lastAction = `Small blind ${formatChips(smallBlindPosted)}`;
+      bigBlindPlayer.lastAction = `Big blind ${formatChips(bigBlindPosted)}`;
+      room.currentBet = Math.max(smallBlindPosted, bigBlindPosted);
+      room.minimumRaise = BIG_BLIND;
+
+      addLog(
+        room,
+        `Hand ${room.handNumber} started. ${smallBlindPlayer.name} posted ${formatChips(
+          smallBlindPosted
+        )}, ${bigBlindPlayer.name} posted ${formatChips(bigBlindPosted)}`
+      );
+
+      const firstToAct = getNextPlayerAfterSeat(
+        room,
+        bigBlindPlayer.seat,
+        (candidate) => candidate.inHand && !candidate.allIn
+      );
+      room.currentTurnPlayerId = firstToAct?.id ?? null;
+
+      if (!room.currentTurnPlayerId) {
+        await this.runOutBoardToShowdown(room);
+      }
+
+      return room;
+    } catch (error) {
+      restoreRoomSnapshot(room, snapshot);
+      throw error;
     }
-
-    room.dealerSeat = getNextPlayerAfterSeat(
-      room,
-      room.dealerSeat,
-      (candidate) => candidate.chips > 0 && candidate.connected
-    ).seat;
-
-    for (const seatedPlayer of eligiblePlayers) {
-      seatedPlayer.inHand = true;
-    }
-
-    const dealer = getPlayerBySeat(room, room.dealerSeat);
-    const smallBlindPlayer =
-      eligiblePlayers.length === 2 ? dealer : getNextPlayerAfterSeat(room, room.dealerSeat, (candidate) => candidate.inHand);
-    const bigBlindPlayer = getNextPlayerAfterSeat(room, smallBlindPlayer.seat, (candidate) => candidate.inHand);
-
-    room.smallBlindPlayerId = smallBlindPlayer.id;
-    room.bigBlindPlayerId = bigBlindPlayer.id;
-
-    const deck = await createDeck(1);
-    room.deckId = deck.deck_id;
-
-    const dealOrder = getPlayersStartingAfterSeat(room, smallBlindPlayer.seat - 1, (candidate) => candidate.inHand);
-    const holeCardCount = dealOrder.length * 2;
-    const drawResponse = await drawCards(room.deckId, holeCardCount);
-
-    drawResponse.cards.forEach((card, index) => {
-      const recipient = dealOrder[index % dealOrder.length];
-      recipient.holeCards.push(card);
-    });
-
-    const smallBlindPosted = postChips(room, smallBlindPlayer, SMALL_BLIND);
-    const bigBlindPosted = postChips(room, bigBlindPlayer, BIG_BLIND);
-
-    smallBlindPlayer.lastAction = `Small blind ${formatChips(smallBlindPosted)}`;
-    bigBlindPlayer.lastAction = `Big blind ${formatChips(bigBlindPosted)}`;
-    room.currentBet = Math.max(smallBlindPosted, bigBlindPosted);
-    room.minimumRaise = BIG_BLIND;
-
-    addLog(
-      room,
-      `Hand ${room.handNumber} started. ${smallBlindPlayer.name} posted ${formatChips(
-        smallBlindPosted
-      )}, ${bigBlindPlayer.name} posted ${formatChips(bigBlindPosted)}`
-    );
-
-    const firstToAct = getNextPlayerAfterSeat(room, bigBlindPlayer.seat, (candidate) => candidate.inHand && !candidate.allIn);
-    room.currentTurnPlayerId = firstToAct?.id ?? null;
-
-    if (!room.currentTurnPlayerId) {
-      await this.runOutBoardToShowdown(room);
-    }
-
-    return room;
   }
 
   async handleAction(socketId, payload) {
     const { room, player } = this.requirePlayerContext(socketId);
-    await this.applyAction(room, player, payload);
+    const snapshot = cloneValue(room);
+
+    try {
+      await this.applyAction(room, player, payload);
+      room.updatedAt = Date.now();
+      return room;
+    } catch (error) {
+      restoreRoomSnapshot(room, snapshot);
+      throw error;
+    }
+  }
+
+  async resumeHand(socketId) {
+    const { room, player } = this.requirePlayerContext(socketId);
+
+    if (room.hostId !== player.id) {
+      throw new Error("Only the host can continue the hand.");
+    }
+
+    if (!room.pendingReveal) {
+      throw new Error("There is nothing to continue right now.");
+    }
+
+    room.pendingDeckMessage = "";
+    await this.advanceStreetOrShowdown(room);
     room.updatedAt = Date.now();
     return room;
   }
@@ -474,6 +632,7 @@ export class PokerRoomManager {
       viewer &&
       room.currentTurnPlayerId === viewer.id &&
       this.isHandLive(room) &&
+      !room.pendingReveal &&
       viewer.inHand &&
       !viewer.folded &&
       !viewer.allIn;
@@ -491,6 +650,8 @@ export class PokerRoomManager {
       bigBlind: room.bigBlind,
       dealerSeat: room.dealerSeat,
       currentTurnPlayerId: room.currentTurnPlayerId,
+      pendingReveal: room.pendingReveal,
+      pendingDeckMessage: room.pendingDeckMessage,
       hostId: room.hostId,
       maxPlayers: room.maxPlayers,
       tableMessage: buildTableMessage(room),
@@ -541,7 +702,12 @@ export class PokerRoomManager {
         viewer &&
         viewer.id === room.hostId &&
         !this.isHandLive(room) &&
-        getEligiblePlayers(room).length >= 2
+        getEligiblePlayers(room).length >= 2,
+      canResumeHand:
+        viewer &&
+        viewer.id === room.hostId &&
+        this.isHandLive(room) &&
+        Boolean(room.pendingReveal)
     };
   }
 
@@ -581,7 +747,7 @@ export class PokerRoomManager {
   }
 
   isHandLive(room) {
-    return ["preflop", "flop", "turn", "river"].includes(room.phase);
+    return LIVE_PHASES.has(room.phase);
   }
 
   async applyAction(room, player, payload, options = {}) {
@@ -728,6 +894,13 @@ export class PokerRoomManager {
     );
   }
 
+  pauseForRevealRetry(room, error) {
+    const street = getPendingRevealStreet(room.phase);
+    room.currentTurnPlayerId = null;
+    room.pendingReveal = street;
+    room.pendingDeckMessage = buildRevealRetryMessage(street, error);
+  }
+
   async advanceStreetOrShowdown(room) {
     if (getContenders(room).length <= 1) {
       this.resolveUncontested(room);
@@ -741,7 +914,15 @@ export class PokerRoomManager {
       return;
     }
 
-    await this.revealNextStreet(room);
+    try {
+      await this.revealNextStreet(room);
+      room.pendingReveal = null;
+      room.pendingDeckMessage = "";
+    } catch (error) {
+      this.pauseForRevealRetry(room, error);
+      return;
+    }
+
     resetStreet(room);
 
     if (getContenders(room).length <= 1) {
@@ -773,7 +954,7 @@ export class PokerRoomManager {
     }
 
     if (room.phase === "preflop") {
-      const reveal = await drawCards(room.deckId, 4);
+      const reveal = await this.deckApi.drawCards(room.deckId, 4);
       room.communityCards.push(...reveal.cards.slice(1));
       room.phase = "flop";
       addLog(room, `Flop: ${reveal.cards
@@ -784,7 +965,7 @@ export class PokerRoomManager {
     }
 
     if (room.phase === "flop") {
-      const reveal = await drawCards(room.deckId, 2);
+      const reveal = await this.deckApi.drawCards(room.deckId, 2);
       room.communityCards.push(reveal.cards[1]);
       room.phase = "turn";
       addLog(room, `Turn: ${reveal.cards[1].code}`);
@@ -792,7 +973,7 @@ export class PokerRoomManager {
     }
 
     if (room.phase === "turn") {
-      const reveal = await drawCards(room.deckId, 2);
+      const reveal = await this.deckApi.drawCards(room.deckId, 2);
       room.communityCards.push(reveal.cards[1]);
       room.phase = "river";
       addLog(room, `River: ${reveal.cards[1].code}`);
@@ -819,6 +1000,8 @@ export class PokerRoomManager {
     winner.lastWinAmount = room.pot;
     room.phase = "showdown";
     room.currentTurnPlayerId = null;
+    room.pendingReveal = null;
+    room.pendingDeckMessage = "";
     room.currentBet = 0;
     room.minimumRaise = BIG_BLIND;
     room.showdown = {
@@ -849,6 +1032,8 @@ export class PokerRoomManager {
     if (!contenders.length || !contributions.length) {
       room.phase = "showdown";
       room.currentTurnPlayerId = null;
+      room.pendingReveal = null;
+      room.pendingDeckMessage = "";
       room.currentBet = 0;
       room.minimumRaise = BIG_BLIND;
       room.showdown = {
@@ -933,6 +1118,8 @@ export class PokerRoomManager {
 
     room.phase = "showdown";
     room.currentTurnPlayerId = null;
+    room.pendingReveal = null;
+    room.pendingDeckMessage = "";
     room.currentBet = 0;
     room.minimumRaise = BIG_BLIND;
     room.showdown = {

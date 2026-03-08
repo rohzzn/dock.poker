@@ -1,0 +1,18 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#08110F"/>
+  <circle cx="168" cy="106" r="220" fill="#1A4C3B" fill-opacity="0.26"/>
+  <circle cx="1034" cy="554" r="260" fill="#D7B47C" fill-opacity="0.16"/>
+  <rect x="54" y="54" width="1092" height="522" rx="36" fill="#0D1715" stroke="#D7B47C" stroke-opacity="0.34" stroke-width="2"/>
+  <rect x="84" y="84" width="1032" height="462" rx="28" fill="#102A22" fill-opacity="0.9"/>
+  <rect x="744" y="126" width="286" height="378" rx="28" fill="#0E1515" stroke="#D7B47C" stroke-opacity="0.18"/>
+  <text x="118" y="188" fill="#D7B47C" font-family="Georgia, serif" font-size="34" letter-spacing="8">DOCK POKER</text>
+  <text x="118" y="286" fill="#F4EFE8" font-family="Georgia, serif" font-size="86" font-weight="700">Texas Hold'em,</text>
+  <text x="118" y="372" fill="#F4EFE8" font-family="Georgia, serif" font-size="86" font-weight="700">clean and private.</text>
+  <text x="118" y="444" fill="#B4BBB4" font-family="Arial, sans-serif" font-size="34">Create a room. Share the link. Deal the hand.</text>
+  <rect x="790" y="170" width="194" height="132" rx="22" fill="#F5F0E8"/>
+  <rect x="830" y="210" width="116" height="52" rx="12" fill="#D7B47C"/>
+  <text x="853" y="246" fill="#0C1614" font-family="Arial, sans-serif" font-size="28" font-weight="700">ROOM</text>
+  <rect x="790" y="324" width="194" height="132" rx="22" fill="#12211B" stroke="#D7B47C" stroke-opacity="0.18"/>
+  <text x="834" y="380" fill="#F4EFE8" font-family="Arial, sans-serif" font-size="40" font-weight="700">SOLO</text>
+  <text x="792" y="528" fill="#AAB2AA" font-family="Arial, sans-serif" font-size="24">dock.poker</text>
+</svg>

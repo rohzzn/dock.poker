@@ -310,6 +310,21 @@ function RoomPage() {
       setError(payload?.message ?? "Unable to update the room.");
     });
 
+    socket.on("room:left", (payload) => {
+      saveStoredSession(roomId, null);
+      setSession(null);
+      setError("");
+      setRoom((current) =>
+        current
+          ? {
+              ...current,
+              viewerPlayerId: null,
+              players: current.players.filter((player) => player.id !== payload?.playerId)
+            }
+          : null
+      );
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -360,6 +375,22 @@ function RoomPage() {
   const viewer = room?.players.find((player) => player.id === room.viewerPlayerId) ?? null;
   const quickRaiseOptions = buildQuickRaiseOptions(room, viewer);
   const shareUrl = typeof window === "undefined" ? `/room/${roomId}` : window.location.href;
+  const joinButtonLabel = session?.playerId ? "Rejoin Table" : "Join Table";
+  const canLeaveSeat = Boolean(viewer) && (!isHandLive(room) || !viewer.inHand);
+
+  function clearSavedSeat() {
+    saveStoredSession(roomId, null);
+    setSession(null);
+    setError("");
+    setRoom((current) =>
+      current
+        ? {
+            ...current,
+            viewerPlayerId: null
+          }
+        : null
+    );
+  }
 
   async function handleCopyLink() {
     const copiedLink = await copyText(shareUrl);
@@ -397,11 +428,24 @@ function RoomPage() {
     socketRef.current?.emit("game:start-hand");
   }
 
+  function handleResumeHand() {
+    socketRef.current?.emit("game:resume-hand");
+  }
+
   function handleAction(type, amount) {
     socketRef.current?.emit("game:action", {
       type,
       amount
     });
+  }
+
+  function handleLeaveSeat() {
+    if (!viewer || !socketRef.current) {
+      clearSavedSeat();
+      return;
+    }
+
+    socketRef.current.emit("room:leave");
   }
 
   const callLabel =
@@ -442,9 +486,13 @@ function RoomPage() {
           <ShowdownPanel showdown={room?.showdown} />
           <FeedRailCard actionLog={room?.actionLog} />
           <ActionRailCard>
-            {!session?.name ? (
+            {!viewer ? (
               <form className="rail-action-form" onSubmit={handleJoinTable}>
-                <p className="muted-text">Choose the name that will appear in the room.</p>
+                <p className="muted-text">
+                  {session?.playerId
+                    ? "Reconnect to your saved seat, or clear it and join fresh."
+                    : "Choose the name that will appear in the room."}
+                </p>
                 <input
                   className="text-input"
                   value={displayName}
@@ -452,16 +500,53 @@ function RoomPage() {
                   placeholder="Display name"
                   maxLength={18}
                 />
-                <button className="primary-button" type="submit">
-                  Join Table
-                </button>
+                <div className="action-buttons">
+                  <button className="primary-button" type="submit">
+                    {joinButtonLabel}
+                  </button>
+                  {session?.playerId ? (
+                    <button className="secondary-button" onClick={clearSavedSeat} type="button">
+                      Reset Saved Seat
+                    </button>
+                  ) : null}
+                </div>
               </form>
+            ) : room?.canResumeHand ? (
+              <div className="rail-action-stack">
+                <p className="muted-text">
+                  {room.pendingDeckMessage ?? `Continue the hand to reveal the ${room.pendingReveal}.`}
+                </p>
+                <div className="action-buttons">
+                  <button className="primary-button" onClick={handleResumeHand} type="button">
+                    Continue Hand
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={!canLeaveSeat}
+                    onClick={handleLeaveSeat}
+                    type="button"
+                  >
+                    Leave Table
+                  </button>
+                </div>
+                {!canLeaveSeat ? <p className="muted-text">Leave is available after the hand.</p> : null}
+              </div>
             ) : room?.canStartHand ? (
               <div className="rail-action-stack">
                 <p className="muted-text">Everyone seated with chips will be dealt in.</p>
-                <button className="primary-button" onClick={handleStartHand} type="button">
-                  Start Hand
-                </button>
+                <div className="action-buttons">
+                  <button className="primary-button" onClick={handleStartHand} type="button">
+                    Start Hand
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={!canLeaveSeat}
+                    onClick={handleLeaveSeat}
+                    type="button"
+                  >
+                    Leave Table
+                  </button>
+                </div>
               </div>
             ) : room?.controls?.canAct ? (
               <PlayerActionPanel
@@ -482,6 +567,17 @@ function RoomPage() {
                     ? `Stack ${formatChips(viewer.chips)}${viewer.bestHandName ? ` | ${viewer.bestHandName}` : ""}`
                     : "Join the table from this device to receive your own seat and cards."}
                 </p>
+                {viewer ? (
+                  <button
+                    className="secondary-button"
+                    disabled={!canLeaveSeat}
+                    onClick={handleLeaveSeat}
+                    type="button"
+                  >
+                    Leave Table
+                  </button>
+                ) : null}
+                {viewer && !canLeaveSeat ? <p className="muted-text">Leave is available after the hand.</p> : null}
                 {room?.phase === "showdown" && room?.canStartHand ? (
                   <button className="primary-button" onClick={handleStartHand} type="button">
                     Next Hand
@@ -561,6 +657,15 @@ function SoloPage() {
     }
   }
 
+  async function handleResumeHand() {
+    try {
+      await controllerRef.current?.resumeHand();
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to continue the hand.");
+    }
+  }
+
   async function handleAction(type, amount) {
     try {
       await controllerRef.current?.handleHumanAction({
@@ -630,7 +735,21 @@ function SoloPage() {
           <ShowdownPanel showdown={room?.showdown} />
           <FeedRailCard actionLog={room?.actionLog} />
           <ActionRailCard>
-            {room?.canStartHand ? (
+            {room?.canResumeHand ? (
+              <div className="rail-action-stack">
+                <p className="muted-text">
+                  {room.pendingDeckMessage ?? `Continue the hand to reveal the ${room.pendingReveal}.`}
+                </p>
+                <button
+                  className="primary-button"
+                  disabled={botThinking}
+                  onClick={handleResumeHand}
+                  type="button"
+                >
+                  Continue Hand
+                </button>
+              </div>
+            ) : room?.canStartHand ? (
               <div className="rail-action-stack">
                 <p className="muted-text">Bots act automatically after you or each other.</p>
                 <button

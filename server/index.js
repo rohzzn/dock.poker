@@ -8,11 +8,14 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 
 import { PokerRoomManager } from "./game.js";
+import { createRateLimiter } from "./rateLimit.js";
+import { RoomPersistence } from "./roomPersistence.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
+const roomsFilePath = path.join(rootDir, "server", "data", "rooms.json");
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 3001);
 
@@ -20,6 +23,18 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 const manager = new PokerRoomManager();
+const persistence = new RoomPersistence({
+  filePath: roomsFilePath,
+  manager
+});
+const createRoomRateLimit = createRateLimiter({
+  windowMs: 1000 * 60,
+  maxRequests: 8,
+  buildMessage: (retryAfterSeconds) => `Too many room creations from this network. Try again in ${retryAfterSeconds}s.`
+});
+const restoredRoomCount = await persistence.load();
+
+app.set("trust proxy", true);
 
 app.use(express.json());
 
@@ -27,8 +42,9 @@ app.get("/api/health", (_request, response) => {
   response.json({ ok: true });
 });
 
-app.post("/api/rooms", (_request, response) => {
+app.post("/api/rooms", createRoomRateLimit, (_request, response) => {
   const room = manager.createRoom();
+  persistence.scheduleSave();
   response.status(201).json({
     roomId: room.id
   });
@@ -66,6 +82,8 @@ function emitRoom(roomId) {
 
     socket.emit("room:state", manager.serializeRoomForPlayer(roomId, player.id));
   }
+
+  persistence.scheduleSave();
 }
 
 io.on("connection", (socket) => {
@@ -125,6 +143,45 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("game:resume-hand", async () => {
+    try {
+      const roomId = manager.getRoomIdForSocket(socket.id);
+
+      if (!roomId) {
+        throw new Error("Join a room first.");
+      }
+
+      await manager.resumeHand(socket.id);
+      emitRoom(roomId);
+    } catch (error) {
+      socket.emit("room:error", {
+        message: error instanceof Error ? error.message : "Unable to continue the hand."
+      });
+    }
+  });
+
+  socket.on("room:leave", async () => {
+    try {
+      const roomId = manager.getRoomIdForSocket(socket.id);
+
+      if (!roomId) {
+        throw new Error("Join a room first.");
+      }
+
+      const { playerId } = manager.leaveSeat(socket.id);
+      socket.leave(roomId);
+      socket.emit("room:left", {
+        roomId,
+        playerId
+      });
+      emitRoom(roomId);
+    } catch (error) {
+      socket.emit("room:error", {
+        message: error instanceof Error ? error.message : "Unable to leave the table."
+      });
+    }
+  });
+
   socket.on("disconnect", async () => {
     const room = await manager.disconnectSocket(socket.id);
 
@@ -135,8 +192,42 @@ io.on("connection", (socket) => {
 });
 
 setInterval(() => {
-  manager.pruneRooms();
+  const removedCount = manager.pruneRooms();
+
+  if (removedCount > 0) {
+    persistence.scheduleSave();
+  }
 }, 1000 * 60 * 15);
+
+let isShuttingDown = false;
+
+async function shutdown() {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+
+  try {
+    await persistence.flush();
+  } finally {
+    httpServer.close(() => {
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000).unref?.();
+  }
+}
+
+process.on("SIGINT", () => {
+  void shutdown();
+});
+
+process.on("SIGTERM", () => {
+  void shutdown();
+});
 
 httpServer.listen(port, host, () => {
   const interfaces = Object.values(os.networkInterfaces())
@@ -145,6 +236,8 @@ httpServer.listen(port, host, () => {
     .map((network) => `http://${network.address}:${port}`);
 
   console.log(`Poker server listening on http://${host}:${port}`);
+  console.log(`Room persistence: ${roomsFilePath}`);
+  console.log(`Restored rooms: ${restoredRoomCount}`);
 
   if (interfaces.length) {
     console.log(`LAN URLs: ${interfaces.join(", ")}`);
