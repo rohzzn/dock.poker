@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { io } from "socket.io-client";
 
+import { useRoomSounds } from "./gameSounds.js";
 import { ActionLog, ShowdownPanel, TableSurface, formatChips } from "./pokerTable.jsx";
 import { SoloPokerSession } from "./soloSession.js";
 
@@ -261,6 +262,8 @@ function RoomPage() {
   const socketRef = useRef(null);
   const copyTimerRef = useRef(null);
 
+  useRoomSounds(room);
+
   useEffect(() => {
     const saved = loadStoredSession(roomId);
     setSessionRoomId(roomId);
@@ -500,6 +503,8 @@ function SoloPage() {
   const [error, setError] = useState("");
   const [botThinking, setBotThinking] = useState(false);
   const [raiseTarget, setRaiseTarget] = useState(0);
+
+  useRoomSounds(room);
 
   useEffect(() => {
     const controller = new SoloPokerSession({
